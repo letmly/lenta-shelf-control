@@ -2,7 +2,38 @@
 name = "lenta-shelf-control"
 version = "0.0.1"
 description = "Распознавание ценников с видеопотока робота — кейс Lenta Tech Life Hack 2026"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    # Core
+    "numpy>=1.26,<2.0",
+    "pandas>=2.2",
+    "opencv-python-headless>=4.10",
+    "opencv-contrib-python-headless>=4.10",
+    "Pillow>=10.0",
+    # QR / штрихкоды (ensemble)
+    "pyzbar>=0.1.9",
+    "zxing-cpp>=2.2",
+    "pyboof>=0.40", # лучший open-source декодер (Apache 2.0, требует JDK 17+)
+    # Утилиты
+    "tqdm>=4.66",
+    "pyyaml>=6.0",
+    "python-Levenshtein>=0.25",
+    "psutil>=5.9",
+    "qrcode>=8.2",
+    "qreader>=3.16",
+]
+
+[project.optional-dependencies]
+ml = [
+    "ultralytics>=8.3",       # детектор YOLO (AGPL — только для прототипа)
+    "paddleocr>=2.8",
+    "paddlepaddle>=2.6",
+    "gradio>=4.40",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
 
 [tool.ruff]
 line-length = 100
