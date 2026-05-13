@@ -26,9 +26,10 @@
 6. [Ресерч моделей и библиотек](docs/06-research.md)
 7. [Оргинфо из чата + FAQ от Ленты](docs/07-org-chat-faq.md)
 8. [Целевая бизнес-архитектура / ТЗ из крупиц](docs/08-target-architecture.md)
-9. [Команда и роли](#команда)
-10. [Roadmap](#roadmap)
-11. [Как запустить](#как-запустить)
+9. [Multi-frame fusion для QR-rescue](docs/09-multiframe-fusion.md)
+10. [Команда и роли](#команда)
+11. [Roadmap](#roadmap)
+12. [Как запустить](#как-запустить)
 
 ---
 

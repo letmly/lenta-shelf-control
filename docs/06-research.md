@@ -78,12 +78,65 @@
 
 ```
 python = 3.11
-ultralytics ~= 8.3
+ultralytics ~= 8.3        # AGPL — только прототип, в проде YOLOX
 opencv-python-headless ~= 4.10
+opencv-contrib-python-headless ~= 4.10   # WeChat QR
 pyzbar ~= 0.1.9
+zxing-cpp ~= 2.2
 paddleocr ~= 2.8
 paddlepaddle ~= 2.6 (CPU)
 gradio ~= 4.40
 pandas ~= 2.2
 numpy ~= 1.26
 ```
+
+## ⚠️ Аудит лицензий (критично для Ленты)
+
+Лента — крупная корпорация, её юристы не одобрят AGPL/GPL зависимости в проде. Ниже — наш стек.
+
+| Компонент | Лицензия | Коммерческий деплой? | Решение |
+|---|---|---|---|
+| **Ultralytics YOLOv8/v11** | **AGPL-3.0** ❌ | НЕТ (нужна Enterprise лицензия) | использовать в прототипе; в проде заменить на YOLOX |
+| ByteTrack | MIT ✅ | да | — |
+| pyzbar | MIT (libzbar LGPL-2.1) | да, при динамической линковке | — |
+| zxing-cpp | Apache 2.0 ✅ | да | — |
+| WeChat QR (opencv-contrib) | Apache 2.0 ✅ | да | — |
+| PaddleOCR / PaddlePaddle | Apache 2.0 ✅ | да | — |
+| RapidOCR | Apache 2.0 ✅ | да | резерв |
+| OpenCV ≥ 4.5 | Apache 2.0 ✅ | да | — |
+| Gradio | Apache 2.0 ✅ | да | — |
+
+### Готовая модель Open Food Facts (важная находка)
+
+🔗 **https://huggingface.co/openfoodfacts/price-tag-detection**
+
+- Архитектура: **YOLOv11x** (extra-large)
+- Обучена на 2.23k снимков ценников европейских магазинов (Carrefour, Albert Heijn и т. д.)
+- Один класс — `price_tag`
+- Размер входа 960×960
+- Веса в `.pt` + `.onnx`
+- **Лицензия: AGPL-3.0** — та же проблема для прода Ленты, что и Ultralytics
+
+Что делаем:
+1. **Прогоняем «из коробки»** на наших размеченных видео в Д2 → baseline recall без обучения.
+2. Если recall высокий → подтверждаем, что задача детекции решена и фокусируемся на OCR+QR.
+3. Если recall средний → fine-tune YOLOX-Nano (Apache 2.0) на нашей разметке.
+4. В питче: «протестировали готовую модель Open Food Facts → recall X% на видео Ленты; в продовый стек переносим YOLOX-Nano (Apache 2.0) с fine-tune на разметке заказчика».
+
+⚠️ yolo11x = ~110 МБ, для робота тяжёл. На сервере MVP — нормально. Для edge нужен nano-вариант.
+
+### План замены YOLOv8 на коммерчески-чистый детектор
+
+| Кандидат | Лицензия | Что | Почему |
+|---|---|---|---|
+| **YOLOX-Nano** (Megvii) | Apache 2.0 ✅ | nano-детектор | основная замена; ~3-7 МБ; конвертируется в ONNX/RKNN |
+| **RT-DETR-R18** (Baidu) | Apache 2.0 ✅ | transformer-detector | резерв, если YOLOX не дотянет |
+| **D-FINE** | Apache 2.0 ✅ | новый SOTA | если будет время на эксперимент |
+| **MMYOLO/MMDet** (OpenMMLab) | Apache 2.0 ✅ | фреймворк с многими моделями | альтернатива; чуть громоздко |
+
+**Что делаем на хакатоне:**
+
+- Прототип Д1–Д4 — на YOLOv8n (быстрее освоить, готовые туториалы).
+- **Параллельно с Д4 запускаем тренировку YOLOX-Nano** на тех же данных.
+- В Д5 сравниваем метрики; в финальный сабмит → YOLOX-Nano.
+- В презентации явно подсвечиваем: «в проде — Apache 2.0 стек, никаких AGPL зависимостей».
