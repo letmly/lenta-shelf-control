@@ -27,9 +27,10 @@
 7. [Оргинфо из чата + FAQ от Ленты](docs/07-org-chat-faq.md)
 8. [Целевая бизнес-архитектура / ТЗ из крупиц](docs/08-target-architecture.md)
 9. [Multi-frame fusion для QR-rescue](docs/09-multiframe-fusion.md)
-10. [Команда и роли](#команда)
-11. [Roadmap](#roadmap)
-12. [Как запустить](#как-запустить)
+10. [Industry baseline (Bossa Nova, Trax, lucky imaging)](docs/10-industry-baseline.md)
+11. [Команда и роли](#команда)
+12. [Roadmap](#roadmap)
+13. [Как запустить](#как-запустить)
 
 ---
 
