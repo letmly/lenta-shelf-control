@@ -1,0 +1,16 @@
+[project]
+name = "lenta-shelf-control"
+version = "0.0.1"
+description = "Распознавание ценников с видеопотока робота — кейс Lenta Tech Life Hack 2026"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

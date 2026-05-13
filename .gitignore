@@ -1,0 +1,45 @@
+# Видео не коммитим — слишком тяжёлые для git/LFS
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Веса моделей
+*.pt
+*.onnx
+*.engine
+*.rknn
+weights/
+models/
+
+# Артефакты
+outputs/
+runs/
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Notebook чекпоинты
+.ipynb_checkpoints/
+
+# Временные данные
+tmp/
+cache/
+*.cache
