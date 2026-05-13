@@ -43,3 +43,8 @@ Thumbs.db
 tmp/
 cache/
 *.cache
+
+# Telegram chat dumps (личные данные участников)
+result.json
+result*.json
+tg_dumps/
