@@ -23,6 +23,8 @@ dependencies = [
     "qreader>=3.16",
     "realesrgan>=0.3.0",
     "basicsr>=1.4.2",
+    "huggingface-hub>=1.14.0",
+    "rapidocr-onnxruntime>=1.4.4",
 ]
 
 [project.optional-dependencies]
