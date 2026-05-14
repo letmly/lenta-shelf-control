@@ -169,8 +169,10 @@ PURE_PRICE_INT_RE = re.compile(r"^\d{2,4}$")
 TWO_DIGIT_RE = re.compile(r"^\d{2}$")
 DIGITS_RE = re.compile(r"^\d+$")
 BARCODE_RE = re.compile(r"^\d{8,14}$")
-ID_SKU_RE = re.compile(r"^\d{10,12}$")
+ID_SKU_RE = re.compile(r"^\d{9,13}$")  # расширил с 10-12 до 9-13
 WORD_RE = re.compile(r"[A-Za-zА-Яа-я]")
+CODE_RE = re.compile(r"\d{1,3}_\d{4,8}")  # формат '01_025019'
+SPECIAL_SYM_RE = re.compile(r"^[ШКЛшкл]$")
 
 
 def _items_from_ocr(ocr_result):
@@ -291,6 +293,17 @@ def parse_ocr(ocr_result, color: str) -> dict:
     # barcode (с склейкой)
     fields["barcode"] = _find_barcode(items)
     fields["id_sku"] = _find_id_sku(items, exclude=fields["barcode"])
+
+    # code: формат '01_025019' (см. sample.csv)
+    for it in items:
+        m = CODE_RE.search(it["text"])
+        if m:
+            fields["code"] = m.group(0); break
+
+    # special_symbols: один символ Ш/К/Л
+    for it in items:
+        if SPECIAL_SYM_RE.fullmatch(it["text"]):
+            fields["special_symbols"] = it["text"].upper(); break
 
     # product_name — БОЛЕЕ МЯГКИЙ фильтр
     used = {fields[k] for k in ("discount_amount","print_datetime","barcode","id_sku") if fields[k]}

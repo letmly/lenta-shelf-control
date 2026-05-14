@@ -44,11 +44,65 @@ def parse_ru(v):
 
 
 def normalize(v) -> str:
-    """Нормализация для сравнения."""
+    """Нормализация для сравнения (для точных полей: цены, штрихкоды, ts)."""
     if pd.isna(v): return ""
     s = str(v).strip().lower()
     s = s.replace(",", ".").replace(" ", "")
     return s
+
+
+def normalize_text(v) -> str:
+    """Нормализация для fuzzy match на текстовых полях (product_name, etc)."""
+    if pd.isna(v): return ""
+    s = str(v).strip().lower()
+    # убираем пунктуацию, лишние пробелы
+    import re
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+# Fuzzy threshold для текстовых полей (Levenshtein-like ratio)
+FUZZY_FIELDS = {"product_name", "additional_info", "code", "special_symbols"}
+FUZZY_THRESHOLD = 0.5  # 50% similarity = match — мягкий порог как у орга
+
+
+def fuzzy_ratio(a: str, b: str) -> float:
+    """Простой fuzzy ratio через python-Levenshtein. 0..1."""
+    if not a and not b: return 1.0
+    if not a or not b: return 0.0
+    try:
+        from rapidfuzz import fuzz
+        return fuzz.token_set_ratio(a, b) / 100.0
+    except ImportError:
+        # fallback: совпадение токенов
+        ta = set(a.split()); tb = set(b.split())
+        if not ta or not tb: return 0.0
+        return len(ta & tb) / max(len(ta), len(tb))
+
+
+def normalize_price(v) -> str:
+    """Цена: '1199,99' / '1199.99' / '1199' → 1199.99 (если есть копейки, иначе 1199)."""
+    if pd.isna(v): return ""
+    s = str(v).strip().replace(",", ".")
+    try:
+        f = float(s)
+        # если копеек нет или они 0, оставляем целое число
+        if f == int(f): return str(int(f))
+        return f"{f:.2f}"
+    except ValueError:
+        return s.lower()
+
+
+def normalize_barcode_or_sku(v) -> str:
+    """Штрихкод/SKU: только цифры."""
+    if pd.isna(v): return ""
+    s = str(v).strip()
+    # уберём .0 в конце (pandas float)
+    if s.endswith(".0"): s = s[:-2]
+    # только цифры
+    digits = "".join(c for c in s if c.isdigit())
+    return digits
 
 
 def iou(a, b):
@@ -61,19 +115,54 @@ def iou(a, b):
     return inter / union if union > 0 else 0
 
 
-def compare_fields(pred_row, gt_row):
-    """% полей распознано верно. Учитываем только поля где GT != пусто."""
+def compare_fields(pred_row, gt_row, fuzzy: bool = True):
+    """% полей распознано верно с учётом fuzzy match для текстовых полей.
+
+    fuzzy=True: для текстовых полей (product_name, code, ...) применяем
+                fuzzy_ratio >= FUZZY_THRESHOLD.
+                Для цен/штрихкодов — нормализованное равенство.
+    """
+    PRICE_FIELDS = {"price_default", "price_card", "price_discount",
+                    "price1_qr", "price2_qr", "price3_qr", "price4_qr",
+                    "wholesale_level_1_price", "wholesale_level_2_price",
+                    "action_price_qr"}
+    BARCODE_FIELDS = {"barcode", "id_sku", "qr_code_barcode"}
+
     correct = 0; total = 0
     per_field = {}
     for f in FIELDS_TO_COMPARE:
-        gt_val = normalize(gt_row.get(f, ""))
-        pred_val = normalize(pred_row.get(f, ""))
-        if gt_val == "" and pred_val == "":
-            continue  # оба пусты — пропускаем
+        gt_raw = gt_row.get(f, "")
+        pred_raw = pred_row.get(f, "")
+        # быстрая проверка на пустые
+        if (pd.isna(gt_raw) or str(gt_raw).strip() == "") and \
+           (pd.isna(pred_raw) or str(pred_raw).strip() == ""):
+            continue
+
+        # для цен нормализуем как числа
+        if f in PRICE_FIELDS:
+            gt_n = normalize_price(gt_raw); pred_n = normalize_price(pred_raw)
+            match = gt_n == pred_n
+        elif f in BARCODE_FIELDS:
+            gt_n = normalize_barcode_or_sku(gt_raw); pred_n = normalize_barcode_or_sku(pred_raw)
+            match = gt_n == pred_n
+        elif fuzzy and f in FUZZY_FIELDS:
+            gt_t = normalize_text(gt_raw); pred_t = normalize_text(pred_raw)
+            ratio = fuzzy_ratio(gt_t, pred_t)
+            match = ratio >= FUZZY_THRESHOLD
+            gt_n = gt_t; pred_n = pred_t
+        else:
+            gt_n = normalize(gt_raw); pred_n = normalize(pred_raw)
+            match = gt_n == pred_n
+
+        # "нет" в pred и реальное значение в gt — НЕ match (мы написали "поля нет", а оно есть)
+        if pred_n == "нет" and gt_n not in ("", "нет"):
+            match = False
+        if gt_n == "нет" and pred_n not in ("", "нет"):
+            match = False
+
         total += 1
-        match = gt_val == pred_val
         if match: correct += 1
-        per_field[f] = {"gt": gt_val, "pred": pred_val, "match": match}
+        per_field[f] = {"gt": gt_n, "pred": pred_n, "match": match}
     score = correct / total if total > 0 else 0
     return score, per_field
 
