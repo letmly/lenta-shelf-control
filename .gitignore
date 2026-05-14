@@ -48,3 +48,4 @@ cache/
 result.json
 result*.json
 tg_dumps/
+_third_party/
