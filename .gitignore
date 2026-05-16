@@ -49,3 +49,7 @@ result.json
 result*.json
 tg_dumps/
 _third_party/
+
+# autoresearch artifacts
+lenta_autoresearch/_runs/
+lenta_autoresearch/run.log
