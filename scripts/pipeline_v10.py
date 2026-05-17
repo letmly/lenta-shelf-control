@@ -227,6 +227,7 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
 
     ocr = RapidOCR()
     rows = []; skipped = 0; qr_decoded = 0
+    diag_any_decoded = 0; diag_ean = 0  # diagnostic counters
     for tr in tqdm(tracks, desc="OCR+QR"):
         # OCR на best_crop (уже в rotated coords, ориентация правильная)
         crop_up = cv2.resize(tr.best_crop, None, fx=upscale, fy=upscale, interpolation=cv2.INTER_CUBIC)
@@ -236,12 +237,40 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
             except Exception: result = None
         except Exception: result = None
 
-        # === MULTI-FRAME QR + 1D barcode decode ===
-        # Перебираем все наблюдения трека (отсортированы по sharpness ↓), top-K кадров.
-        # Снят фильтр "barcode in payload" — пускаем pyzbar/zxing декодить и EAN/UPC.
+        # === MULTI-FRAME QR + 1D barcode decode (v11: barcode-zone + Otsu) ===
         qr_fields = {}
-        ean_barcode = ""  # отдельно — visual 1D barcode (EAN-13/UPC-A)
+        ean_barcode = ""
         from pipeline_v9 import parse_qr_payload as _pq
+
+        def _make_barcode_variants(src):
+            """Generate crop variants optimized for 1D barcode + QR detection."""
+            if src.size == 0: return []
+            H, W = src.shape[:2]
+            vs = []
+            # 1. Full src (для QR)
+            vs.append(('full', src))
+            # 2. Bottom 50% — типичная зона barcode/EAN
+            vs.append(('bot50', src[H//2:, :]))
+            # 3. Bottom 40% + right 60% — частая зона штрихкода справа снизу
+            vs.append(('botright', src[int(H*0.55):, int(W*0.3):]))
+            # 4. Right 50% — некоторые ценники с QR справа
+            vs.append(('right50', src[:, W//2:]))
+            out = []
+            for name, v in vs:
+                if v.size == 0 or v.shape[0]<10 or v.shape[1]<10: continue
+                for fx in (4, 2):
+                    up = cv2.resize(v, None, fx=fx, fy=fx, interpolation=cv2.INTER_CUBIC)
+                    out.append((f'{name}_x{fx}', up))
+                    # Otsu binarization
+                    g = cv2.cvtColor(up, cv2.COLOR_BGR2GRAY) if up.ndim==3 else up
+                    _, otsu = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+                    out.append((f'{name}_x{fx}_otsu', otsu))
+                    # Adaptive threshold
+                    adapt = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                                   cv2.THRESH_BINARY, 31, 7)
+                    out.append((f'{name}_x{fx}_adapt', adapt))
+            return out
+
         observations_sorted = sorted(tr.observations, key=lambda o: -o[2])[:8]  # top-8 sharpest
         for obs_ts, obs_bbox, _sh in observations_sorted:
             if qr_fields and ean_barcode: break  # обе цели достигнуты
@@ -263,13 +292,9 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
                 tight = fr_rot[ty1:ty2, tx1:tx2]
                 variants = []
                 for src in (wide, tight):
-                    if src.size == 0: continue
-                    variants.append(cv2.resize(src, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC))
-                    variants.append(cv2.resize(src, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC))
-                    variants.append(src)
-                for v in variants:
+                    variants.extend(_make_barcode_variants(src))
+                for vname, v in variants:
                     if qr_fields and ean_barcode: break
-                    # pyzbar
                     try:
                         for d in pyzbar_decode(v):
                             payload = d.data.decode("utf-8", errors="ignore")
@@ -278,12 +303,11 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
                                 if not qr_fields:
                                     pq = _pq(payload)
                                     if pq: qr_fields = pq
-                            elif btype in ("EAN13","EAN8","UPCA","UPCE","CODE128","CODE39","ITF","I25"):
+                            elif btype in ("EAN13","EAN8","UPCA","UPCE","CODE128","CODE39","ITF","I25","I2OF5"):
                                 if not ean_barcode:
                                     digits = "".join(c for c in payload if c.isdigit())
                                     if len(digits) >= 8: ean_barcode = digits
                     except Exception: pass
-                    # zxing
                     try:
                         for d in zxingcpp.read_barcodes(v):
                             text = d.text; fmt = str(d.format)
@@ -291,7 +315,7 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
                                 if not qr_fields:
                                     pq = _pq(text)
                                     if pq: qr_fields = pq
-                            elif any(k in fmt.upper() for k in ("EAN","UPC","CODE128","CODE39","ITF","I25")):
+                            elif any(k in fmt.upper() for k in ("EAN","UPC","CODE128","CODE39","ITF","I2OF5","CODE_128","CODE_39")):
                                 if not ean_barcode:
                                     digits = "".join(c for c in text if c.isdigit())
                                     if len(digits) >= 8: ean_barcode = digits
@@ -299,6 +323,8 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
             except Exception:
                 pass
         if qr_fields: qr_decoded += 1
+        if ean_barcode: diag_ean += 1
+        if qr_fields or ean_barcode: diag_any_decoded += 1
 
         # parse OCR
         if result:
@@ -336,7 +362,7 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
         fields["x_max"] = round(float(x2_o), 1); fields["y_max"] = round(float(y2_o), 1)
         rows.append(fields)
     cap_qr.release()
-    print(f"  skipped={skipped}  QR decoded={qr_decoded}/{len(tracks)} ({qr_decoded/max(len(tracks),1):.0%})")
+    print(f"  skipped={skipped}  QR={qr_decoded}/{len(tracks)} ({qr_decoded/max(len(tracks),1):.0%})  EAN={diag_ean}  ANY={diag_any_decoded}")
     df_out = pd.DataFrame(rows, columns=CSV_COLUMNS).fillna("")
     df_out.to_csv(output_csv, index=False, encoding="utf-8")
     print(f"  saved: {output_csv}  ({len(df_out)} rows)")
