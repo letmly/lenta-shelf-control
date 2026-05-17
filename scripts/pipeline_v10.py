@@ -134,6 +134,8 @@ class Track:
     best_bbox_rotated: list = field(default_factory=list)
     best_crop: np.ndarray = None
     best_sharpness: float = -1.0
+    # multi-frame: все наблюдения (ts, bbox_rotated, sharpness)
+    observations: list = field(default_factory=list)
 
 
 class Tracker:
@@ -176,6 +178,7 @@ class Tracker:
         crop = frame[py1:py2, px1:px2]
         if crop.size == 0 or crop.shape[0] < 30 or crop.shape[1] < 30: return
         sh = sharpness(crop)
+        track.observations.append((ts_ms, list(bbox), sh))
         if sh > track.best_sharpness:
             track.best_sharpness = sh; track.best_ts = ts_ms
             track.best_bbox_rotated = list(bbox)
@@ -233,47 +236,68 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
             except Exception: result = None
         except Exception: result = None
 
-        # QR-rescue: широкий crop в rotated coords
+        # === MULTI-FRAME QR + 1D barcode decode ===
+        # Перебираем все наблюдения трека (отсортированы по sharpness ↓), top-K кадров.
+        # Снят фильтр "barcode in payload" — пускаем pyzbar/zxing декодить и EAN/UPC.
         qr_fields = {}
-        try:
-            cap_qr.set(cv2.CAP_PROP_POS_MSEC, float(tr.best_ts))
-            ok_qr, fr_qr = cap_qr.read()
-            if ok_qr:
+        ean_barcode = ""  # отдельно — visual 1D barcode (EAN-13/UPC-A)
+        from pipeline_v9 import parse_qr_payload as _pq
+        observations_sorted = sorted(tr.observations, key=lambda o: -o[2])[:8]  # top-8 sharpest
+        for obs_ts, obs_bbox, _sh in observations_sorted:
+            if qr_fields and ean_barcode: break  # обе цели достигнуты
+            try:
+                cap_qr.set(cv2.CAP_PROP_POS_MSEC, float(obs_ts))
+                ok_qr, fr_qr = cap_qr.read()
+                if not ok_qr: continue
                 fr_rot = cv2.rotate(fr_qr, cv2.ROTATE_90_COUNTERCLOCKWISE)
-                x1, y1, x2, y2 = tr.best_bbox_rotated
+                x1, y1, x2, y2 = obs_bbox
                 bw, bh = x2-x1, y2-y1
                 H_r, W_r = fr_rot.shape[:2]
-                ex1 = max(0, int(x1 - bw * 0.75))
-                ey1 = max(0, int(y1 - bh * 0.75))
-                ex2 = min(W_r, int(x2 + bw * 0.75))
-                ey2 = min(H_r, int(y2 + bh * 0.75))
+                ex1 = max(0, int(x1 - bw * 0.75)); ey1 = max(0, int(y1 - bh * 0.75))
+                ex2 = min(W_r, int(x2 + bw * 0.75)); ey2 = min(H_r, int(y2 + bh * 0.75))
                 wide = fr_rot[ey1:ey2, ex1:ex2]
-                # QR в rotated frame не требует доп rotation (уже правильно)
-                # Используем try_decode_qr, но без двойного rotate. Делаем напрямую.
-                from pipeline_v9 import parse_qr_payload as _pq
-                variants = [
-                    cv2.resize(wide, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC),
-                    cv2.resize(wide, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC),
-                ]
-                found_payload = None
+                if wide.size == 0: continue
+                # tight crop тоже (для 1D barcode на самом ценнике)
+                tx1 = max(0, int(x1)); ty1 = max(0, int(y1))
+                tx2 = min(W_r, int(x2)); ty2 = min(H_r, int(y2))
+                tight = fr_rot[ty1:ty2, tx1:tx2]
+                variants = []
+                for src in (wide, tight):
+                    if src.size == 0: continue
+                    variants.append(cv2.resize(src, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC))
+                    variants.append(cv2.resize(src, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC))
+                    variants.append(src)
                 for v in variants:
-                    if found_payload: break
+                    if qr_fields and ean_barcode: break
+                    # pyzbar
                     try:
                         for d in pyzbar_decode(v):
                             payload = d.data.decode("utf-8", errors="ignore")
-                            if "=" in payload and ("barcode" in payload or "b=" in payload):
-                                qr_fields = _pq(payload)
-                                if qr_fields: found_payload = payload; break
+                            btype = d.type
+                            if btype == "QRCODE" and "=" in payload:
+                                if not qr_fields:
+                                    pq = _pq(payload)
+                                    if pq: qr_fields = pq
+                            elif btype in ("EAN13","EAN8","UPCA","UPCE","CODE128","CODE39","ITF","I25"):
+                                if not ean_barcode:
+                                    digits = "".join(c for c in payload if c.isdigit())
+                                    if len(digits) >= 8: ean_barcode = digits
                     except Exception: pass
-                    if found_payload: break
+                    # zxing
                     try:
                         for d in zxingcpp.read_barcodes(v):
-                            if "=" in d.text and ("barcode" in d.text or "b=" in d.text):
-                                qr_fields = _pq(d.text)
-                                if qr_fields: found_payload = d.text; break
+                            text = d.text; fmt = str(d.format)
+                            if "QR" in fmt.upper() and "=" in text:
+                                if not qr_fields:
+                                    pq = _pq(text)
+                                    if pq: qr_fields = pq
+                            elif any(k in fmt.upper() for k in ("EAN","UPC","CODE128","CODE39","ITF","I25")):
+                                if not ean_barcode:
+                                    digits = "".join(c for c in text if c.isdigit())
+                                    if len(digits) >= 8: ean_barcode = digits
                     except Exception: pass
-        except Exception:
-            pass
+            except Exception:
+                pass
         if qr_fields: qr_decoded += 1
 
         # parse OCR
@@ -292,7 +316,10 @@ def process_video(video_path: Path, fps_sample=3, output_csv=None,
         # merge QR
         for qf, qv in qr_fields.items():
             fields[qf] = str(qv)
-        if qr_fields.get("qr_code_barcode") and not fields.get("barcode"):
+        # 1D barcode (EAN/UPC) приоритет над OCR-распознанным "barcode"
+        if ean_barcode:
+            fields["barcode"] = ean_barcode
+        elif qr_fields.get("qr_code_barcode") and not fields.get("barcode"):
             fields["barcode"] = qr_fields["qr_code_barcode"]
 
         # default "нет"
